@@ -17,9 +17,11 @@ import javax.xml.transform.dom.DOMResult;
 import javax.xml.transform.dom.DOMSource;
 import javax.xml.transform.stream.StreamResult;
 import javax.xml.transform.stream.StreamSource;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
@@ -32,11 +34,10 @@ public class GraphSimplifier {
     checkInputFile(inputFile);
     File outputFile = new File(args[1]);
 
-    Graph graph = readGraph(inputFile);
-
-    Set<Object> idsOfIndirectEdges = idsOfIndirectEdges(graph);
-
     Document document = readGraphDom(inputFile);
+    addEdgeIds(document);
+    Graph graph = parseGraph(document);
+    Set<Object> idsOfIndirectEdges = idsOfIndirectEdges(graph);
     reduceGraphDom(document, idsOfIndirectEdges);
     writeDom(outputFile, document);
   }
@@ -58,22 +59,53 @@ public class GraphSimplifier {
     }
   }
 
-  private static Graph readGraph(File inputFile) throws IOException {
+  private static Document readGraphDom(File inputFile) throws TransformerException {
+    DOMResult domResult = new DOMResult();
+    TransformerFactory.newInstance().newTransformer().transform(new StreamSource(inputFile), domResult);
+    return (Document) domResult.getNode();
+  }
+
+  private static void addEdgeIds(Document document) {
+    // Find all edge ids and all edges without ids.
+    NodeList edgeNodes = document.getElementsByTagName("edge");
+    Collection<Element> elementsWithoutId = new ArrayList<Element>();
+    Collection<String> allIds = new HashSet<String>();
+    for (int i = 0; i < edgeNodes.getLength(); i++) {
+      Element edgeElement = (Element) edgeNodes.item(i);
+      String id = edgeElement.getAttribute("id");
+      if ("".equals(id)) {
+        elementsWithoutId.add(edgeElement);
+      } else {
+        allIds.add(id);
+      }
+    }
+
+    int nextId = 0;
+    for (Element element : elementsWithoutId) {
+      // Find a fresh id.
+      String checkedId;
+      do {
+        checkedId = "edge-" + nextId++;
+      } while (allIds.contains(checkedId));
+      // Update element.
+      element.setAttribute("id", checkedId);
+    }
+  }
+
+  private static Graph parseGraph(Document document) throws IOException, TransformerException {
+    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+    Transformer transformer = TransformerFactory.newInstance().newTransformer();
+    transformer.transform(new DOMSource(document), new StreamResult(buffer));
+
     Graph graph = new TinkerGraph();
     GraphMLReader graphMLReader = new GraphMLReader(graph);
-    FileInputStream inputStream = new FileInputStream(inputFile);
+    InputStream inputStream = new ByteArrayInputStream(buffer.toByteArray());
     try {
       graphMLReader.inputGraph(inputStream);
     } finally {
       inputStream.close();
     }
     return graph;
-  }
-
-  private static Document readGraphDom(File inputFile) throws TransformerException {
-    DOMResult domResult = new DOMResult();
-    TransformerFactory.newInstance().newTransformer().transform(new StreamSource(inputFile), domResult);
-    return (Document) domResult.getNode();
   }
 
   private static void writeDom(File outputFile, Document document) throws TransformerException {
